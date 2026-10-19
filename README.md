@@ -1,12 +1,11 @@
-# 🌱 Hydroponic_PCB
+Hydroponic_PCB
 
 A custom PCB for controlling a hydroponic system, built around the **ESP32-S3**. It measures **pH**, **temperature** and **humidity**, shows readings on an OLED display, publishes telemetry to **ThingsBoard** over MQTT, and drives a water pump through relays, either on an automatic timer or by remote command.
 
 Designed in **EasyEDA** by satianpong.ded (REV 1.0).
 
 ---
-
-## ✨ Features
+Features
 
 - **pH measurement** through an analog front-end (TLV2372 op-amps) with a Wheatstone bridge and a comparator for threshold alerts
 - **Temperature / humidity** sensing with a DHT22
@@ -18,8 +17,7 @@ Designed in **EasyEDA** by satianpong.ded (REV 1.0).
 - **RESET** and **BOOT** buttons
 
 ---
-
-## 🧩 Schematics
+Schematics
 
 The design is split into three sheets.
 
@@ -56,8 +54,7 @@ Analog front-end for pH and temperature sensing, using **TLV2372IDGKG4** dual ra
 | Relay x2 | Driven by **2N3904** transistors (470 Ω base resistors), **1N4007** flyback diodes, status LEDs, and a LINE terminal for the load |
 
 ---
-
-## 🔌 Pin Mapping
+Pin Mapping
 
 Net names to ESP32-S3 pins, per the Controller sheet:
 
@@ -71,11 +68,9 @@ Net names to ESP32-S3 pins, per the Controller sheet:
 | `USB_DP` / `USB_DN` | IO20 / IO19 | USB-C |
 | `ESP32_GPIO0` | IO0 | BOOT button |
 
-> ⚠️ **Important:** the sample firmware below sets `RELAY1 = 27` and `DHTPIN = 33`, which match the *module pin numbers* on the schematic rather than the GPIO numbers. Verify against your board before using it (per the table above, Relay1 = GPIO35 and DHT22 = GPIO40).
-
 ---
 
-## 🛠️ Bill of Materials (main parts)
+Bill of Materials (main parts)
 
 | Part | Description |
 |---|---|
@@ -94,7 +89,7 @@ Net names to ESP32-S3 pins, per the Controller sheet:
 
 ---
 
-## 💻 Firmware
+Firmware
 
 ### Required libraries (Arduino IDE / PlatformIO)
 
@@ -113,127 +108,7 @@ Board: **ESP32S3 Dev Module** (esp32 core by Espressif)
 4. Runs the pump on a cycle: **ON for 10 s out of every 15 s**.
 5. Manual override with the messages `ON` / `OFF` (after `ON`, the automatic timer is suspended until `OFF` is received).
 
-### Source code
-
-> Before use, replace `YOUR_WIFI_SSID`, `YOUR_WIFI_PASSWORD` and `YOUR_THINGSBOARD_TOKEN`. **Never commit real credentials to GitHub.**
-
-```cpp
-#include <WiFi.h>
-#include <PubSubClient.h>
-#include "DHT.h"
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
-const char* tbHost = "demo.thingsboard.io";
-const char* tbToken = "YOUR_THINGSBOARD_TOKEN";
-
-#define PH_PIN 4
-#define RELAY1 27
-#define DHTPIN 33
-#define DHTTYPE DHT22
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
-DHT dht(DHTPIN, DHTTYPE);
-WiFiClient espClient;
-PubSubClient client(espClient);
-
-unsigned long lastCycle = 0;
-const unsigned long cycleTime = 15000;
-const unsigned long pumpOnTime = 10000;
-bool forcePump = false;
-
-void mqttReconnect() {
-  while (!client.connected()) {
-    client.connect("ESP32Client", tbToken, NULL);
-    delay(1000);
-  }
-}
-
-void callback(char* topic, byte* payload, unsigned int length) {
-  String msg;
-  for (int i = 0; i < length; i++) msg += (char)payload[i];
-  if (msg == "ON") {
-    digitalWrite(RELAY1, LOW);
-    forcePump = true;
-  }
-  if (msg == "OFF") {
-    digitalWrite(RELAY1, HIGH);
-    forcePump = false;
-  }
-}
-
-float readPH() {
-  int analogValue = analogRead(PH_PIN);
-  float voltage = analogValue * (3.3 / 4095.0);
-  float phValue = 7 + ((2.5 - voltage) * 3.0);
-  return phValue;
-}
-
-void updateOLED(float ph, float temp, float humi) {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 0);
-  display.println("ESP32 Hydroponic");
-  display.setCursor(0, 16);
-  display.printf("pH: %.2f\n", ph);
-  display.setCursor(0, 32);
-  display.printf("Temp: %.1f C\n", temp);
-  display.setCursor(0, 48);
-  display.printf("Humi: %.1f %%\n", humi);
-  display.display();
-}
-
-void setup() {
-  Serial.begin(115200);
-  pinMode(RELAY1, OUTPUT);
-  digitalWrite(RELAY1, HIGH);
-  dht.begin();
-  Wire.begin(8, 9);
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) delay(500);
-  client.setServer(tbHost, 1883);
-  client.setCallback(callback);
-}
-
-void loop() {
-  if (!client.connected()) mqttReconnect();
-  client.loop();
-  float ph = readPH();
-  float temp = dht.readTemperature();
-  float humi = dht.readHumidity();
-  updateOLED(ph, temp, humi);
-  String payload = "{";
-  payload += "\"ph\":" + String(ph, 2) + ",";
-  payload += "\"temperature\":" + String(temp, 1) + ",";
-  payload += "\"humidity\":" + String(humi, 1);
-  payload += "}";
-  client.publish("v1/devices/me/telemetry", payload.c_str());
-  unsigned long now = millis();
-  if (!forcePump) {
-    unsigned long diff = now - lastCycle;
-    if (diff < pumpOnTime) {
-      digitalWrite(RELAY1, LOW);
-    } else {
-      digitalWrite(RELAY1, HIGH);
-    }
-    if (diff > cycleTime) {
-      lastCycle = now;
-    }
-  }
-  delay(500);
-}
-```
-
----
-
-## ☁️ ThingsBoard Setup
+ThingsBoard Setup
 
 1. Create a device on [ThingsBoard](https://demo.thingsboard.io) and copy its **Access Token**.
 2. Put the token in the `tbToken` variable.
@@ -241,8 +116,7 @@ void loop() {
 4. Build a dashboard with charts / gauges as needed.
 
 ---
-
-## 📝 Known Issues / Things to Check
+Known Issues / Things to Check
 
 - **Relay logic:** the relay driver uses an NPN 2N3904 (active-HIGH: a HIGH GPIO turns the relay on), but the firmware uses `LOW = ON`, which is the convention for active-LOW relay modules. Swap HIGH/LOW to match the actual circuit.
 - **ADC voltage range:** the pH op-amps run from 5 V, so their output can exceed the 3.3 V limit of the ESP32-S3 ADC. Check the output range or add a voltage divider.
@@ -252,28 +126,3 @@ void loop() {
 - **Relay 2:** the hardware has a second relay channel, but the firmware only controls Relay1.
 - **Safety:** the relay LINE terminals can switch mains voltage. Use proper insulation and creepage distances.
 
----
-
-## 📁 Suggested Repository Layout
-
-```
-Hydroponic_PCB/
-├── README.md
-├── schematic/
-│   ├── Esp32_Controller.png
-│   ├── Ph_sensor.png
-│   └── Power_Relay.png
-├── firmware/
-│   └── hydroponic.ino
-└── hardware/        # EasyEDA / Gerber files
-```
-
----
-
-## 👤 Author
-
-**satianpong.ded**, designed with [EasyEDA](https://easyeda.com)
-
-## 📄 License
-
-MIT License (change as needed)
